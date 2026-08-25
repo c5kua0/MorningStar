@@ -22,7 +22,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-pupublic class MorningStar extends JavaPlugin implements Listener {
+public class MorningStar extends JavaPlugin implements Listener {
 
     // =========================
     // SETTINGS
