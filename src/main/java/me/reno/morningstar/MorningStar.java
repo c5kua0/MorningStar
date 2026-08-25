@@ -6,41 +6,58 @@ import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.*;
 import org.bukkit.event.*;
 import org.bukkit.event.entity.*;
-import org.bukkit.event.inventory.*;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
 import java.util.*;
 
-public final class MorningStar extends JavaPlugin implements Listener, CommandExecutor {
+public final class MorningStar extends JavaPlugin
+        implements Listener, CommandExecutor {
 
-    private final String OWNER = "Yue_47";
+    private static final String OWNER = "Yue_47";
 
     private final Map<UUID, Integer> combo = new HashMap<>();
     private final Map<UUID, Long> fury = new HashMap<>();
 
     private NamespacedKey key;
+    private BukkitTask auraTask;
 
     @Override
     public void onEnable() {
 
         key = new NamespacedKey(this, "morningstar");
 
-        getServer().getPluginManager().registerEvents(this, this);
+        getServer()
+                .getPluginManager()
+                .registerEvents(this, this);
 
         if (getCommand("morningstar") != null) {
-            getCommand("morningstar").setExecutor(this);
+            getCommand("morningstar")
+                    .setExecutor(this);
         }
 
-        getLogger().info("MorningStar enabled!");
-        getLogger().info("Owner: " + OWNER);
+        getLogger().info("================================");
+        getLogger().info("       MORNINGSTAR ENABLED");
+        getLogger().info("       Owner: " + OWNER);
+        getLogger().info("================================");
+    }
+
+    @Override
+    public void onDisable() {
+
+        if (auraTask != null) {
+            auraTask.cancel();
+            auraTask = null;
+        }
     }
 
     // =========================
-    // MORNINGSTAR ITEM
+    // CREATE MORNINGSTAR
     // =========================
 
     private ItemStack createMorningStar() {
@@ -48,11 +65,11 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
         ItemStack sword =
                 new ItemStack(Material.GOLDEN_SWORD);
 
-        ItemMeta meta =
-                sword.getItemMeta();
+        ItemMeta meta = sword.getItemMeta();
 
-        if (meta == null)
+        if (meta == null) {
             return sword;
+        }
 
         meta.setDisplayName(
                 ChatColor.GOLD + "" +
@@ -69,6 +86,7 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
                 true
         );
 
+        // Unique ID
         meta.getPersistentDataContainer().set(
                 key,
                 PersistentDataType.BYTE,
@@ -76,15 +94,16 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
         );
 
         meta.setLore(Arrays.asList(
-                ChatColor.GRAY + "Legendary MorningStar",
+                ChatColor.GRAY + "The legendary MorningStar.",
                 "",
                 ChatColor.YELLOW + "4 Block Reach",
                 ChatColor.YELLOW + "2x Attack Speed",
                 ChatColor.YELLOW + "1.5x Damage",
                 ChatColor.YELLOW + "Sharpness V",
                 ChatColor.YELLOW + "Shield Break",
-                ChatColor.YELLOW + "4 Crits = Critical Fury",
-                ChatColor.YELLOW + "Critical Fury: 15 seconds",
+                ChatColor.YELLOW + "4 Critical Hits",
+                ChatColor.YELLOW + "Critical Fury",
+                ChatColor.YELLOW + "Duration: 15 seconds",
                 "",
                 ChatColor.RED + "Owner: " + OWNER
         ));
@@ -95,19 +114,22 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
     }
 
     // =========================
-    // CHECK WEAPON
+    // CHECK MORNINGSTAR
     // =========================
 
     private boolean isMorningStar(ItemStack item) {
 
-        if (item == null)
+        if (item == null) {
             return false;
+        }
 
-        if (item.getType() != Material.GOLDEN_SWORD)
+        if (item.getType() != Material.GOLDEN_SWORD) {
             return false;
+        }
 
-        if (!item.hasItemMeta())
+        if (!item.hasItemMeta()) {
             return false;
+        }
 
         return item.getItemMeta()
                 .getPersistentDataContainer()
@@ -116,6 +138,10 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
                         PersistentDataType.BYTE
                 );
     }
+
+    // =========================
+    // OWNER
+    // =========================
 
     private boolean isOwner(Player player) {
 
@@ -133,7 +159,7 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
     }
 
     // =========================
-    // COMBAT
+    // DAMAGE
     // =========================
 
     @EventHandler(
@@ -145,11 +171,13 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
     ) {
 
         if (!(event.getDamager()
-                instanceof Player player))
+                instanceof Player player)) {
             return;
+        }
 
-        if (!holdingMorningStar(player))
+        if (!holdingMorningStar(player)) {
             return;
+        }
 
         // =========================
         // CRITICAL FURY
@@ -157,119 +185,67 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
 
         if (isFuryActive(player)) {
 
-            event.setCritical(true);
+            /*
+             * Paper 26.1.2 does not have
+             * event.setCritical().
+             *
+             * 1.5x damage simulates
+             * guaranteed critical damage.
+             */
 
-            return;
-        }
-
-        // =========================
-        // NORMAL CRITICAL
-        // =========================
-
-        if (isCritical(player)) {
-
-            int hits =
-                    combo.getOrDefault(
-                            player.getUniqueId(),
-                            0
-                    ) + 1;
-
-            if (hits >= 4) {
-
-                combo.remove(
-                        player.getUniqueId()
-                );
-
-                // 15 seconds
-                fury.put(
-                        player.getUniqueId(),
-                        System.currentTimeMillis()
-                                + 15000
-                );
-
-                // CHAT MESSAGE
-                player.sendMessage(
-                        ChatColor.GOLD +
-                        "" + ChatColor.BOLD +
-                        "✦ MORNINGSTAR ✦"
-                );
-
-                player.sendMessage(
-                        ChatColor.YELLOW +
-                        "" + ChatColor.BOLD +
-                        "CRITICAL FURY ACTIVATED!"
-                );
-
-                player.sendMessage(
-                        ChatColor.WHITE +
-                        "All normal attacks are now CRITICAL!"
-                );
-
-                player.sendMessage(
-                        ChatColor.GRAY +
-                        "Duration: 15 seconds"
-                );
-
-                // PARTICLES
-                player.getWorld().spawnParticle(
-                        Particle.CRIT,
-                        player.getLocation()
-                                .add(0, 1, 0),
-                        60,
-                        0.6,
-                        1.0,
-                        0.6,
-                        0.15
-                );
-
-                player.getWorld().spawnParticle(
-                        Particle.ENCHANT,
-                        player.getLocation()
-                                .add(0, 1, 0),
-                        40,
-                        0.5,
-                        1.0,
-                        0.5,
-                        1
-                );
-
-                // SOUND
-                player.playSound(
-                        player.getLocation(),
-                        Sound.ENTITY_PLAYER_ATTACK_CRIT,
-                        1.0f,
-                        0.6f
-                );
-
-                player.playSound(
-                        player.getLocation(),
-                        Sound.BLOCK_BEACON_ACTIVATE,
-                        1.0f,
-                        1.5f
-                );
-
-            } else {
-
-                combo.put(
-                        player.getUniqueId(),
-                        hits
-                );
-
-                player.sendActionBar(
-                        ChatColor.GOLD +
-                        "Critical Combo: " +
-                        ChatColor.WHITE +
-                        hits +
-                        "/4"
-                );
-            }
+            event.setDamage(
+                    event.getDamage() * 1.5
+            );
 
         } else {
 
-            // Failed critical resets combo
-            combo.remove(
-                    player.getUniqueId()
-            );
+            // =========================
+            // NORMAL CRITICAL
+            // =========================
+
+            if (isCritical(player)) {
+
+                int hits =
+                        combo.getOrDefault(
+                                player.getUniqueId(),
+                                0
+                        ) + 1;
+
+                // =========================
+                // FOURTH CRIT
+                // =========================
+
+                if (hits >= 4) {
+
+                    combo.remove(
+                            player.getUniqueId()
+                    );
+
+                    activateFury(player);
+
+                } else {
+
+                    combo.put(
+                            player.getUniqueId(),
+                            hits
+                    );
+
+                    player.sendActionBar(
+                            ChatColor.GOLD +
+                            "Critical Combo: " +
+                            ChatColor.WHITE +
+                            hits +
+                            "/4"
+                    );
+                }
+
+            } else {
+
+                // Failed critical resets combo
+                combo.remove(
+                        player.getUniqueId()
+                );
+            }
         }
 
         // =========================
@@ -281,27 +257,7 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
 
             if (target.isBlocking()) {
 
-                // 3 seconds
-                target.setCooldown(
-                        Material.SHIELD,
-                        60
-                );
-
-                target.sendMessage(
-                        ChatColor.RED +
-                        "Your shield was disabled by MorningStar!"
-                );
-
-                target.getWorld().spawnParticle(
-                        Particle.CRIT,
-                        target.getLocation()
-                                .add(0, 1, 0),
-                        20,
-                        0.3,
-                        0.5,
-                        0.3,
-                        0.1
-                );
+                disableShield(target);
             }
         }
     }
@@ -322,16 +278,272 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
     }
 
     // =========================
-    // CRITICAL FURY
+    // ACTIVATE FURY
+    // =========================
+
+    private void activateFury(Player player) {
+
+        // 15 seconds
+        fury.put(
+                player.getUniqueId(),
+                System.currentTimeMillis() + 15000
+        );
+
+        // =========================
+        // CHAT
+        // =========================
+
+        player.sendMessage("");
+
+        player.sendMessage(
+                ChatColor.DARK_RED +
+                "" + ChatColor.BOLD +
+                "✦ MORNINGSTAR ✦"
+        );
+
+        player.sendMessage(
+                ChatColor.RED +
+                "" + ChatColor.BOLD +
+                "CRITICAL FURY ACTIVATED!"
+        );
+
+        player.sendMessage(
+                ChatColor.WHITE +
+                "All normal attacks are now CRITICAL!"
+        );
+
+        player.sendMessage(
+                ChatColor.GRAY +
+                "Duration: " +
+                ChatColor.WHITE +
+                "15 seconds"
+        );
+
+        player.sendMessage("");
+
+        // =========================
+        // ACTIVATION PARTICLES
+        // =========================
+
+        Location location =
+                player.getLocation()
+                        .add(0, 1, 0);
+
+        player.getWorld().spawnParticle(
+                Particle.CRIT,
+                location,
+                80,
+                0.7,
+                1.0,
+                0.7,
+                0.15
+        );
+
+        player.getWorld().spawnParticle(
+                Particle.ENCHANT,
+                location,
+                60,
+                0.7,
+                1.0,
+                0.7,
+                1
+        );
+
+        // =========================
+        // SOUND
+        // =========================
+
+        player.playSound(
+                location,
+                Sound.ENTITY_PLAYER_ATTACK_CRIT,
+                1.0f,
+                0.6f
+        );
+
+        player.playSound(
+                location,
+                Sound.BLOCK_BEACON_ACTIVATE,
+                1.0f,
+                1.5f
+        );
+
+        // =========================
+        // DARK RED AURA
+        // =========================
+
+        startDarkRedAura(player);
+    }
+
+    // =========================
+    // DARK RED AURA
+    // =========================
+
+    private void startDarkRedAura(Player player) {
+
+        if (auraTask != null) {
+            auraTask.cancel();
+        }
+
+        auraTask =
+                getServer()
+                        .getScheduler()
+                        .runTaskTimer(
+                                this,
+                                () -> {
+
+            // Stop when Fury ends
+            if (!isFuryActive(player)) {
+
+                if (auraTask != null) {
+                    auraTask.cancel();
+                    auraTask = null;
+                }
+
+                return;
+            }
+
+            Location loc =
+                    player.getLocation();
+
+            // =========================
+            // DARK RED BODY AURA
+            // =========================
+
+            for (int i = 0; i < 20; i++) {
+
+                double angle =
+                        (Math.PI * 2 / 20) * i;
+
+                double radius = 0.75;
+
+                double x =
+                        Math.cos(angle) * radius;
+
+                double z =
+                        Math.sin(angle) * radius;
+
+                double y =
+                        0.2 +
+                        (Math.random() * 1.8);
+
+                Location particle =
+                        loc.clone().add(
+                                x,
+                                y,
+                                z
+                        );
+
+                player.getWorld().spawnParticle(
+                        Particle.DUST,
+                        particle,
+                        1,
+                        new Particle.DustOptions(
+                                Color.fromRGB(
+                                        80,
+                                        0,
+                                        0
+                                ),
+                                2.0f
+                        )
+                );
+            }
+
+            // =========================
+            // DARK RED FOOT RING
+            // =========================
+
+            for (int i = 0; i < 24; i++) {
+
+                double angle =
+                        (Math.PI * 2 / 24) * i;
+
+                double radius = 0.9;
+
+                double x =
+                        Math.cos(angle) * radius;
+
+                double z =
+                        Math.sin(angle) * radius;
+
+                Location ring =
+                        loc.clone().add(
+                                x,
+                                0.05,
+                                z
+                        );
+
+                player.getWorld().spawnParticle(
+                        Particle.DUST,
+                        ring,
+                        1,
+                        new Particle.DustOptions(
+                                Color.fromRGB(
+                                        110,
+                                        0,
+                                        0
+                                ),
+                                1.5f
+                        )
+                );
+            }
+
+            // =========================
+            // DARK RED RISING PARTICLES
+            // =========================
+
+            for (int i = 0; i < 5; i++) {
+
+                double x =
+                        (Math.random() - 0.5) * 1.2;
+
+                double z =
+                        (Math.random() - 0.5) * 1.2;
+
+                double y =
+                        Math.random() * 2.0;
+
+                Location rising =
+                        loc.clone().add(
+                                x,
+                                y,
+                                z
+                        );
+
+                player.getWorld().spawnParticle(
+                        Particle.DUST,
+                        rising,
+                        1,
+                        new Particle.DustOptions(
+                                Color.fromRGB(
+                                        60,
+                                        0,
+                                        0
+                                ),
+                                1.8f
+                        )
+                );
+            }
+
+        },
+        0L,
+        2L
+        );
+    }
+
+    // =========================
+    // FURY CHECK
     // =========================
 
     private boolean isFuryActive(Player player) {
 
         Long end =
-                fury.get(player.getUniqueId());
+                fury.get(
+                        player.getUniqueId()
+                );
 
-        if (end == null)
+        if (end == null) {
             return false;
+        }
 
         if (System.currentTimeMillis() >= end) {
 
@@ -340,7 +552,7 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
             );
 
             player.sendActionBar(
-                    ChatColor.GRAY +
+                    ChatColor.DARK_RED +
                     "Critical Fury ended."
             );
 
@@ -348,6 +560,35 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
         }
 
         return true;
+    }
+
+    // =========================
+    // SHIELD BREAK
+    // =========================
+
+    private void disableShield(Player target) {
+
+        // 3 seconds
+        target.setCooldown(
+                Material.SHIELD,
+                60
+        );
+
+        target.sendMessage(
+                ChatColor.RED +
+                "Your shield was disabled by MorningStar!"
+        );
+
+        target.getWorld().spawnParticle(
+                Particle.CRIT,
+                target.getLocation()
+                        .add(0, 1, 0),
+                25,
+                0.3,
+                0.5,
+                0.3,
+                0.1
+        );
     }
 
     // =========================
@@ -387,34 +628,35 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
     ) {
 
         if (!(event.getEntity()
-                instanceof Player player))
+                instanceof Player player)) {
             return;
+        }
 
-        if (!isMorningStar(
+        ItemStack item =
                 event.getItem()
-                        .getItemStack()
-        ))
-            return;
+                        .getItemStack();
 
-        // Only Yue_47 can pick it up
+        if (!isMorningStar(item)) {
+            return;
+        }
+
+        // Only Yue_47
         if (!isOwner(player)) {
 
             event.setCancelled(true);
-
             event.getItem().remove();
 
             return;
         }
 
-        // Prevent duplicate copy
-        for (ItemStack item :
+        // Anti duplicate
+        for (ItemStack inventoryItem :
                 player.getInventory()
                         .getContents()) {
 
-            if (isMorningStar(item)) {
+            if (isMorningStar(inventoryItem)) {
 
                 event.setCancelled(true);
-
                 event.getItem().remove();
 
                 player.sendMessage(
@@ -436,8 +678,9 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
             PlayerDeathEvent event
     ) {
 
-        if (!isOwner(event.getEntity()))
+        if (!isOwner(event.getEntity())) {
             return;
+        }
 
         event.getDrops().removeIf(
                 this::isMorningStar
@@ -462,16 +705,23 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
                 event.getCursor();
 
         if (!isMorningStar(current)
-                && !isMorningStar(cursor))
+                && !isMorningStar(cursor)) {
             return;
+        }
 
-        // Prevent putting it into containers
-        if (event.getClickedInventory() != null
-                && event.getClickedInventory()
+        if (event.getClickedInventory()
+                != null
+                &&
+                event.getClickedInventory()
                 != event.getWhoClicked()
                 .getInventory()) {
 
             event.setCancelled(true);
+
+            event.getWhoClicked().sendMessage(
+                    ChatColor.RED +
+                    "MorningStar cannot be stored!"
+            );
         }
     }
 
@@ -487,18 +737,33 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
             String[] args
     ) {
 
-        if (!(sender instanceof Player player))
-            return true;
+        if (!(sender instanceof Player player)) {
 
-        // /morningstar
-        if (args.length == 0) {
+            sender.sendMessage(
+                    "Players only."
+            );
+
+            return true;
+        }
+
+        // =========================
+        // HELP
+        // =========================
+
+        if (args.length == 0
+                || args[0].equalsIgnoreCase(
+                "help"
+        )) {
 
             sendHelp(player);
 
             return true;
         }
 
-        // /morningstar give
+        // =========================
+        // GIVE
+        // =========================
+
         if (args[0].equalsIgnoreCase("give")) {
 
             if (!isOwner(player)) {
@@ -540,7 +805,10 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
             return true;
         }
 
-        // /morningstar status
+        // =========================
+        // STATUS
+        // =========================
+
         if (args[0].equalsIgnoreCase("status")) {
 
             int hits =
@@ -575,12 +843,36 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
             player.sendMessage(
                     ChatColor.YELLOW +
                     "Critical Fury: " +
-                    (active
-                            ? ChatColor.GREEN +
-                            "ACTIVE"
-                            : ChatColor.RED +
-                            "INACTIVE")
+                    (
+                        active
+                        ? ChatColor.GREEN + "ACTIVE"
+                        : ChatColor.RED + "INACTIVE"
+                    )
             );
+
+            if (active) {
+
+                Long end =
+                        fury.get(
+                                player.getUniqueId()
+                        );
+
+                long seconds =
+                        Math.max(
+                                0,
+                                (end -
+                                System.currentTimeMillis())
+                                / 1000
+                        );
+
+                player.sendMessage(
+                        ChatColor.YELLOW +
+                        "Time left: " +
+                        ChatColor.WHITE +
+                        seconds +
+                        "s"
+                );
+            }
 
             return true;
         }
@@ -589,6 +881,10 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
 
         return true;
     }
+
+    // =========================
+    // HELP
+    // =========================
 
     private void sendHelp(Player player) {
 
@@ -599,12 +895,23 @@ public final class MorningStar extends JavaPlugin implements Listener, CommandEx
 
         player.sendMessage(
                 ChatColor.YELLOW +
-                "/morningstar give"
+                "/morningstar give" +
+                ChatColor.GRAY +
+                " - Get MorningStar"
         );
 
         player.sendMessage(
                 ChatColor.YELLOW +
-                "/morningstar status"
+                "/morningstar status" +
+                ChatColor.GRAY +
+                " - View status"
+        );
+
+        player.sendMessage(
+                ChatColor.YELLOW +
+                "/morningstar help" +
+                ChatColor.GRAY +
+                " - Show help"
         );
     }
-  }
+}
