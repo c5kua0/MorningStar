@@ -1,0 +1,9 @@
+name: MorningStar
+version: 1.0
+main: me.reno.morningstar.MorningStar
+api-version: '26.1'
+
+commands:
+  morningstar:
+    description: MorningStar weapon
+    usage: /morningstar <give|status>
