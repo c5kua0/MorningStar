@@ -1,545 +1,317 @@
 package me.reno.morningstar;
 
 import org.bukkit.*;
-import org.bukkit.command.*;
-import org.bukkit.enchantments.Enchantment;
-import org.bukkit.entity.*;
-import org.bukkit.event.*;
-import org.bukkit.event.entity.*;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.player.*;
-import org.bukkit.inventory.*;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.block.Action;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.RayTraceResult;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
-public final class MorningStar extends JavaPlugin
-        implements Listener, CommandExecutor {
+public class Morningstar extends JavaPlugin implements Listener {
 
-    private static final String OWNER = "Yue_47";
+    // =========================
+    // SETTINGS
+    // =========================
 
-    private final Map<UUID, Integer> combo = new HashMap<>();
-    private final Map<UUID, Long> fury = new HashMap<>();
+    private static final String OWNER_NAME = "Yue_47";
 
-    private NamespacedKey key;
-    private BukkitTask auraTask;
+    // Normal Morningstar physical damage
+    private static final double NORMAL_DAMAGE = 23.0;
+
+    // Critical Fury damage
+    // Higher than Netherite Sword + Sharpness V
+    private static final double CRITICAL_FURY_DAMAGE = 30.0;
+
+    // Reach for Java players
+    private static final double REACH = 4.0;
+
+    // Critical Fury cooldown
+    private static final long CRITICAL_FURY_COOLDOWN = 30_000L;
+
+    // Critical Fury duration
+    private static final long CRITICAL_FURY_DURATION = 10_000L;
+
+    // Hit counter
+    private static final int STUN_HITS = 5;
+
+    // =========================
+    // DATA
+    // =========================
+
+    private final Map<UUID, Integer> hitCounter = new HashMap<>();
+    private final Map<UUID, Long> furyCooldown = new HashMap<>();
+    private final Map<UUID, Long> furyActive = new HashMap<>();
+
+    private NamespacedKey morningstarKey;
 
     @Override
     public void onEnable() {
 
-        key = new NamespacedKey(this, "morningstar");
+        morningstarKey = new NamespacedKey(this, "morningstar");
 
-        getServer()
-                .getPluginManager()
-                .registerEvents(this, this);
+        getServer().getPluginManager().registerEvents(this, this);
 
-        if (getCommand("morningstar") != null) {
-            getCommand("morningstar")
-                    .setExecutor(this);
-        }
+        // Speed II + Critical Fury aura checker
+        getServer().getScheduler().runTaskTimer(this, () -> {
 
-        getLogger().info("================================");
-        getLogger().info("       MORNINGSTAR ENABLED");
-        getLogger().info("       Owner: " + OWNER);
-        getLogger().info("================================");
-    }
+            for (Player player : Bukkit.getOnlinePlayers()) {
 
-    @Override
-    public void onDisable() {
-
-        if (auraTask != null) {
-            auraTask.cancel();
-            auraTask = null;
-        }
-    }
-
-    // =========================
-    // CREATE MORNINGSTAR
-    // =========================
-
-    private ItemStack createMorningStar() {
-
-        ItemStack sword =
-                new ItemStack(Material.GOLDEN_SWORD);
-
-        ItemMeta meta = sword.getItemMeta();
-
-        if (meta == null) {
-            return sword;
-        }
-
-        meta.setDisplayName(
-                ChatColor.GOLD + "" +
-                ChatColor.BOLD +
-                "MorningStar"
-        );
-
-        meta.setUnbreakable(true);
-
-        // Sharpness V
-        meta.addEnchant(
-                Enchantment.SHARPNESS,
-                5,
-                true
-        );
-
-        // Unique ID
-        meta.getPersistentDataContainer().set(
-                key,
-                PersistentDataType.BYTE,
-                (byte) 1
-        );
-
-        meta.setLore(Arrays.asList(
-                ChatColor.GRAY + "The legendary MorningStar.",
-                "",
-                ChatColor.YELLOW + "4 Block Reach",
-                ChatColor.YELLOW + "2x Attack Speed",
-                ChatColor.YELLOW + "1.5x Damage",
-                ChatColor.YELLOW + "Sharpness V",
-                ChatColor.YELLOW + "Shield Break",
-                ChatColor.YELLOW + "4 Critical Hits",
-                ChatColor.YELLOW + "Critical Fury",
-                ChatColor.YELLOW + "Duration: 15 seconds",
-                "",
-                ChatColor.RED + "Owner: " + OWNER
-        ));
-
-        sword.setItemMeta(meta);
-
-        return sword;
-    }
-
-    // =========================
-    // CHECK MORNINGSTAR
-    // =========================
-
-    private boolean isMorningStar(ItemStack item) {
-
-        if (item == null) {
-            return false;
-        }
-
-        if (item.getType() != Material.GOLDEN_SWORD) {
-            return false;
-        }
-
-        if (!item.hasItemMeta()) {
-            return false;
-        }
-
-        return item.getItemMeta()
-                .getPersistentDataContainer()
-                .has(
-                        key,
-                        PersistentDataType.BYTE
-                );
-    }
-
-    // =========================
-    // OWNER
-    // =========================
-
-    private boolean isOwner(Player player) {
-
-        return player.getName()
-                .equalsIgnoreCase(OWNER);
-    }
-
-    private boolean holdingMorningStar(Player player) {
-
-        return isOwner(player)
-                && isMorningStar(
-                player.getInventory()
-                        .getItemInMainHand()
-        );
-    }
-
-    // =========================
-    // DAMAGE
-    // =========================
-
-    @EventHandler(
-            priority = EventPriority.HIGHEST,
-            ignoreCancelled = true
-    )
-    public void onDamage(
-            EntityDamageByEntityEvent event
-    ) {
-
-        if (!(event.getDamager()
-                instanceof Player player)) {
-            return;
-        }
-
-        if (!holdingMorningStar(player)) {
-            return;
-        }
-
-        // =========================
-        // CRITICAL FURY
-        // =========================
-
-        if (isFuryActive(player)) {
-
-            /*
-             * Paper 26.1.2 does not have
-             * event.setCritical().
-             *
-             * 1.5x damage simulates
-             * guaranteed critical damage.
-             */
-
-            event.setDamage(
-                    event.getDamage() * 1.5
-            );
-
-        } else {
-
-            // =========================
-            // NORMAL CRITICAL
-            // =========================
-
-            if (isCritical(player)) {
-
-                int hits =
-                        combo.getOrDefault(
-                                player.getUniqueId(),
-                                0
-                        ) + 1;
-
-                // =========================
-                // FOURTH CRIT
-                // =========================
-
-                if (hits >= 4) {
-
-                    combo.remove(
-                            player.getUniqueId()
-                    );
-
-                    activateFury(player);
-
-                } else {
-
-                    combo.put(
-                            player.getUniqueId(),
-                            hits
-                    );
-
-                    player.sendActionBar(
-                            ChatColor.GOLD +
-                            "Critical Combo: " +
-                            ChatColor.WHITE +
-                            hits +
-                            "/4"
-                    );
+                if (!isOwner(player)) {
+                    continue;
                 }
 
-            } else {
+                // =========================
+                // AUTOMATIC SPEED II
+                // =========================
 
-                // Failed critical resets combo
-                combo.remove(
-                        player.getUniqueId()
+                player.addPotionEffect(
+                        new PotionEffect(
+                                PotionEffectType.SPEED,
+                                40,
+                                1,
+                                false,
+                                false,
+                                true
+                        )
                 );
+
+                // =========================
+                // CRITICAL FURY AURA
+                // =========================
+
+                if (isFuryActive(player)) {
+
+                    Location loc = player.getLocation().add(0, 1.0, 0);
+
+                    for (int i = 0; i < 8; i++) {
+
+                        double angle = Math.random() * Math.PI * 2;
+                        double radius = 0.6 + Math.random() * 0.5;
+
+                        double x = Math.cos(angle) * radius;
+                        double z = Math.sin(angle) * radius;
+
+                        Location particleLoc = loc.clone().add(x, 0, z);
+
+                        player.getWorld().spawnParticle(
+                                Particle.DUST,
+                                particleLoc,
+                                1,
+                                new Particle.DustOptions(
+                                        Color.fromRGB(120, 0, 0),
+                                        1.8f
+                                )
+                        );
+                    }
+                }
             }
-        }
 
-        // =========================
-        // SHIELD BREAK
-        // =========================
+            // Remove expired Fury states
+            long now = System.currentTimeMillis();
 
-        if (event.getEntity()
-                instanceof Player target) {
+            furyActive.entrySet().removeIf(entry -> now >= entry.getValue());
 
-            if (target.isBlocking()) {
-
-                disableShield(target);
-            }
-        }
+        }, 0L, 10L);
     }
 
-    // =========================
-    // CRITICAL DETECTION
-    // =========================
+    // =========================================================
+    // MORNINGSTAR ITEM
+    // =========================================================
 
-    private boolean isCritical(Player player) {
+    public ItemStack createMorningstar() {
 
-        return !player.isOnGround()
-                && player.getFallDistance() > 0
-                && !player.isSprinting()
-                && !player.isFlying()
-                && !player.isSwimming()
-                && !player.isClimbing()
-                && !player.isInsideVehicle();
+        ItemStack item = new ItemStack(Material.NETHERITE_SWORD);
+
+        ItemMeta meta = item.getItemMeta();
+
+        if (meta != null) {
+
+            meta.setDisplayName(
+                    ChatColor.DARK_RED + "" +
+                    ChatColor.BOLD + "Morningstar"
+            );
+
+            meta.setLore(java.util.Arrays.asList(
+                    ChatColor.GRAY + "The weapon of Yue_47",
+                    "",
+                    ChatColor.RED + "⚔ Physical Attack: " + NORMAL_DAMAGE,
+                    ChatColor.RED + "⚔ Reach: " + REACH + " blocks",
+                    "",
+                    ChatColor.DARK_RED + "" +
+                    ChatColor.BOLD + "Critical Fury",
+                    ChatColor.GRAY + "Right Click to activate",
+                    ChatColor.GRAY + "Cooldown: 30 seconds"
+            ));
+
+            meta.setUnbreakable(true);
+
+            meta.getPersistentDataContainer().set(
+                    morningstarKey,
+                    PersistentDataType.BYTE,
+                    (byte) 1
+            );
+
+            item.setItemMeta(meta);
+        }
+
+        return item;
     }
 
-    // =========================
-    // ACTIVATE FURY
-    // =========================
+    // =========================================================
+    // CHECK MORNINGSTAR
+    // =========================================================
 
-    private void activateFury(Player player) {
+    private boolean isMorningstar(ItemStack item) {
 
-        // 15 seconds
-        fury.put(
-                player.getUniqueId(),
-                System.currentTimeMillis() + 15000
+        if (item == null || !item.hasItemMeta()) {
+            return false;
+        }
+
+        ItemMeta meta = item.getItemMeta();
+
+        if (meta == null) {
+            return false;
+        }
+
+        Byte value = meta.getPersistentDataContainer().get(
+                morningstarKey,
+                PersistentDataType.BYTE
         );
 
+        return value != null && value == (byte) 1;
+    }
+
+    // =========================================================
+    // OWNER
+    // =========================================================
+
+    private boolean isOwner(Player player) {
+        return player.getName().equalsIgnoreCase(OWNER_NAME);
+    }
+
+    // =========================================================
+    // CRITICAL FURY
+    // RIGHT CLICK
+    // =========================================================
+
+    @EventHandler
+    public void onRightClick(PlayerInteractEvent event) {
+
+        Player player = event.getPlayer();
+
+        if (!isOwner(player)) {
+            return;
+        }
+
+        ItemStack item = player.getInventory().getItemInMainHand();
+
+        if (!isMorningstar(item)) {
+            return;
+        }
+
+        Action action = event.getAction();
+
+        if (action != Action.RIGHT_CLICK_AIR &&
+                action != Action.RIGHT_CLICK_BLOCK) {
+            return;
+        }
+
+        event.setCancelled(true);
+
+        activateCriticalFury(player);
+    }
+
+    private void activateCriticalFury(Player player) {
+
+        UUID uuid = player.getUniqueId();
+
+        long now = System.currentTimeMillis();
+
         // =========================
-        // CHAT
+        // CHECK COOLDOWN
         // =========================
 
-        player.sendMessage("");
+        if (furyCooldown.containsKey(uuid)) {
+
+            long remaining =
+                    furyCooldown.get(uuid) - now;
+
+            if (remaining > 0) {
+
+                long seconds =
+                        (remaining + 999) / 1000;
+
+                player.sendMessage(
+                        ChatColor.RED +
+                        "Critical Fury is on cooldown! " +
+                        ChatColor.GRAY +
+                        "(" + seconds + "s)"
+                );
+
+                return;
+            }
+        }
+
+        // =========================
+        // ACTIVATE
+        // =========================
+
+        furyCooldown.put(
+                uuid,
+                now + CRITICAL_FURY_COOLDOWN
+        );
+
+        furyActive.put(
+                uuid,
+                now + CRITICAL_FURY_DURATION
+        );
 
         player.sendMessage(
                 ChatColor.DARK_RED +
                 "" + ChatColor.BOLD +
-                "✦ MORNINGSTAR ✦"
-        );
-
-        player.sendMessage(
-                ChatColor.RED +
-                "" + ChatColor.BOLD +
                 "CRITICAL FURY ACTIVATED!"
         );
 
-        player.sendMessage(
-                ChatColor.WHITE +
-                "All normal attacks are now CRITICAL!"
-        );
-
-        player.sendMessage(
-                ChatColor.GRAY +
-                "Duration: " +
-                ChatColor.WHITE +
-                "15 seconds"
-        );
-
-        player.sendMessage("");
-
-        // =========================
-        // ACTIVATION PARTICLES
-        // =========================
-
-        Location location =
-                player.getLocation()
-                        .add(0, 1, 0);
-
-        player.getWorld().spawnParticle(
-                Particle.CRIT,
-                location,
-                80,
-                0.7,
-                1.0,
-                0.7,
-                0.15
-        );
-
-        player.getWorld().spawnParticle(
-                Particle.ENCHANT,
-                location,
-                60,
-                0.7,
-                1.0,
-                0.7,
-                1
-        );
-
-        // =========================
-        // SOUND
-        // =========================
-
         player.playSound(
-                location,
-                Sound.ENTITY_PLAYER_ATTACK_CRIT,
-                1.0f,
-                0.6f
-        );
-
-        player.playSound(
-                location,
-                Sound.BLOCK_BEACON_ACTIVATE,
-                1.0f,
+                player.getLocation(),
+                Sound.ENTITY_WITHER_SPAWN,
+                0.7f,
                 1.5f
         );
 
-        // =========================
-        // DARK RED AURA
-        // =========================
-
-        startDarkRedAura(player);
-    }
-
-    // =========================
-    // DARK RED AURA
-    // =========================
-
-    private void startDarkRedAura(Player player) {
-
-        if (auraTask != null) {
-            auraTask.cancel();
-        }
-
-        auraTask =
-                getServer()
-                        .getScheduler()
-                        .runTaskTimer(
-                                this,
-                                () -> {
-
-            // Stop when Fury ends
-            if (!isFuryActive(player)) {
-
-                if (auraTask != null) {
-                    auraTask.cancel();
-                    auraTask = null;
-                }
-
-                return;
-            }
-
-            Location loc =
-                    player.getLocation();
-
-            // =========================
-            // DARK RED BODY AURA
-            // =========================
-
-            for (int i = 0; i < 20; i++) {
-
-                double angle =
-                        (Math.PI * 2 / 20) * i;
-
-                double radius = 0.75;
-
-                double x =
-                        Math.cos(angle) * radius;
-
-                double z =
-                        Math.sin(angle) * radius;
-
-                double y =
-                        0.2 +
-                        (Math.random() * 1.8);
-
-                Location particle =
-                        loc.clone().add(
-                                x,
-                                y,
-                                z
-                        );
-
-                player.getWorld().spawnParticle(
-                        Particle.DUST,
-                        particle,
-                        1,
-                        new Particle.DustOptions(
-                                Color.fromRGB(
-                                        80,
-                                        0,
-                                        0
-                                ),
-                                2.0f
-                        )
-                );
-            }
-
-            // =========================
-            // DARK RED FOOT RING
-            // =========================
-
-            for (int i = 0; i < 24; i++) {
-
-                double angle =
-                        (Math.PI * 2 / 24) * i;
-
-                double radius = 0.9;
-
-                double x =
-                        Math.cos(angle) * radius;
-
-                double z =
-                        Math.sin(angle) * radius;
-
-                Location ring =
-                        loc.clone().add(
-                                x,
-                                0.05,
-                                z
-                        );
-
-                player.getWorld().spawnParticle(
-                        Particle.DUST,
-                        ring,
-                        1,
-                        new Particle.DustOptions(
-                                Color.fromRGB(
-                                        110,
-                                        0,
-                                        0
-                                ),
-                                1.5f
-                        )
-                );
-            }
-
-            // =========================
-            // DARK RED RISING PARTICLES
-            // =========================
-
-            for (int i = 0; i < 5; i++) {
-
-                double x =
-                        (Math.random() - 0.5) * 1.2;
-
-                double z =
-                        (Math.random() - 0.5) * 1.2;
-
-                double y =
-                        Math.random() * 2.0;
-
-                Location rising =
-                        loc.clone().add(
-                                x,
-                                y,
-                                z
-                        );
-
-                player.getWorld().spawnParticle(
-                        Particle.DUST,
-                        rising,
-                        1,
-                        new Particle.DustOptions(
-                                Color.fromRGB(
-                                        60,
-                                        0,
-                                        0
-                                ),
-                                1.8f
-                        )
-                );
-            }
-
-        },
-        0L,
-        2L
+        // Initial dark-red burst
+        player.getWorld().spawnParticle(
+                Particle.DUST,
+                player.getLocation().add(0, 1, 0),
+                80,
+                1.0,
+                1.0,
+                1.0,
+                new Particle.DustOptions(
+                        Color.fromRGB(120, 0, 0),
+                        2.5f
+                )
         );
     }
 
-    // =========================
-    // FURY CHECK
-    // =========================
-
     private boolean isFuryActive(Player player) {
 
-        Long end =
-                fury.get(
-                        player.getUniqueId()
-                );
+        Long end = furyActive.get(player.getUniqueId());
 
         if (end == null) {
             return false;
@@ -547,14 +319,7 @@ public final class MorningStar extends JavaPlugin
 
         if (System.currentTimeMillis() >= end) {
 
-            fury.remove(
-                    player.getUniqueId()
-            );
-
-            player.sendActionBar(
-                    ChatColor.DARK_RED +
-                    "Critical Fury ended."
-            );
+            furyActive.remove(player.getUniqueId());
 
             return false;
         }
@@ -562,356 +327,247 @@ public final class MorningStar extends JavaPlugin
         return true;
     }
 
-    // =========================
-    // SHIELD BREAK
-    // =========================
-
-    private void disableShield(Player target) {
-
-        // 3 seconds
-        target.setCooldown(
-                Material.SHIELD,
-                60
-        );
-
-        target.sendMessage(
-                ChatColor.RED +
-                "Your shield was disabled by MorningStar!"
-        );
-
-        target.getWorld().spawnParticle(
-                Particle.CRIT,
-                target.getLocation()
-                        .add(0, 1, 0),
-                25,
-                0.3,
-                0.5,
-                0.3,
-                0.1
-        );
-    }
-
-    // =========================
-    // DROP PROTECTION
-    // =========================
-
-    @EventHandler(
-            priority = EventPriority.HIGHEST
-    )
-    public void onDrop(
-            PlayerDropItemEvent event
-    ) {
-
-        if (isMorningStar(
-                event.getItemDrop()
-                        .getItemStack()
-        )) {
-
-            event.setCancelled(true);
-
-            event.getPlayer().sendMessage(
-                    ChatColor.RED +
-                    "MorningStar cannot be dropped!"
-            );
-        }
-    }
-
-    // =========================
-    // PICKUP PROTECTION
-    // =========================
-
-    @EventHandler(
-            priority = EventPriority.HIGHEST
-    )
-    public void onPickup(
-            EntityPickupItemEvent event
-    ) {
-
-        if (!(event.getEntity()
-                instanceof Player player)) {
-            return;
-        }
-
-        ItemStack item =
-                event.getItem()
-                        .getItemStack();
-
-        if (!isMorningStar(item)) {
-            return;
-        }
-
-        // Only Yue_47
-        if (!isOwner(player)) {
-
-            event.setCancelled(true);
-            event.getItem().remove();
-
-            return;
-        }
-
-        // Anti duplicate
-        for (ItemStack inventoryItem :
-                player.getInventory()
-                        .getContents()) {
-
-            if (isMorningStar(inventoryItem)) {
-
-                event.setCancelled(true);
-                event.getItem().remove();
-
-                player.sendMessage(
-                        ChatColor.RED +
-                        "Duplicate MorningStar removed!"
-                );
-
-                return;
-            }
-        }
-    }
-
-    // =========================
-    // DEATH PROTECTION
-    // =========================
+    // =========================================================
+    // NORMAL ATTACK
+    // =========================================================
 
     @EventHandler
-    public void onDeath(
-            PlayerDeathEvent event
-    ) {
+    public void onDamage(EntityDamageByEntityEvent event) {
 
-        if (!isOwner(event.getEntity())) {
+        if (!(event.getDamager() instanceof Player player)) {
             return;
         }
 
-        event.getDrops().removeIf(
-                this::isMorningStar
-        );
-    }
-
-    // =========================
-    // INVENTORY PROTECTION
-    // =========================
-
-    @EventHandler(
-            priority = EventPriority.HIGHEST
-    )
-    public void onInventoryClick(
-            InventoryClickEvent event
-    ) {
-
-        ItemStack current =
-                event.getCurrentItem();
-
-        ItemStack cursor =
-                event.getCursor();
-
-        if (!isMorningStar(current)
-                && !isMorningStar(cursor)) {
+        if (!isOwner(player)) {
             return;
         }
 
-        if (event.getClickedInventory()
-                != null
-                &&
-                event.getClickedInventory()
-                != event.getWhoClicked()
-                .getInventory()) {
+        ItemStack item = player.getInventory().getItemInMainHand();
 
-            event.setCancelled(true);
-
-            event.getWhoClicked().sendMessage(
-                    ChatColor.RED +
-                    "MorningStar cannot be stored!"
-            );
+        if (!isMorningstar(item)) {
+            return;
         }
-    }
 
-    // =========================
-    // COMMAND
-    // =========================
-
-    @Override
-    public boolean onCommand(
-            CommandSender sender,
-            Command command,
-            String label,
-            String[] args
-    ) {
-
-        if (!(sender instanceof Player player)) {
-
-            sender.sendMessage(
-                    "Players only."
-            );
-
-            return true;
+        if (!(event.getEntity() instanceof LivingEntity target)) {
+            return;
         }
 
         // =========================
-        // HELP
+        // DAMAGE
         // =========================
 
-        if (args.length == 0
-                || args[0].equalsIgnoreCase(
-                "help"
-        )) {
+        if (isFuryActive(player)) {
 
-            sendHelp(player);
+            event.setDamage(CRITICAL_FURY_DAMAGE);
 
-            return true;
+        } else {
+
+            event.setDamage(NORMAL_DAMAGE);
         }
 
         // =========================
-        // GIVE
+        // HIT COUNTER
         // =========================
 
-        if (args[0].equalsIgnoreCase("give")) {
+        UUID uuid = player.getUniqueId();
 
-            if (!isOwner(player)) {
+        int hits = hitCounter.getOrDefault(uuid, 0) + 1;
 
-                player.sendMessage(
-                        ChatColor.RED +
-                        "You are not the owner!"
-                );
+        if (hits >= STUN_HITS) {
 
-                return true;
-            }
+            // =========================
+            // STUN
+            // Slowness 255
+            // =========================
 
-            // Anti duplicate
-            for (ItemStack item :
-                    player.getInventory()
-                            .getContents()) {
-
-                if (isMorningStar(item)) {
-
-                    player.sendMessage(
-                            ChatColor.YELLOW +
-                            "You already have MorningStar!"
-                    );
-
-                    return true;
-                }
-            }
-
-            player.getInventory()
-                    .addItem(
-                            createMorningStar()
-                    );
-
-            player.sendMessage(
-                    ChatColor.GOLD +
-                    "MorningStar received!"
-            );
-
-            return true;
-        }
-
-        // =========================
-        // STATUS
-        // =========================
-
-        if (args[0].equalsIgnoreCase("status")) {
-
-            int hits =
-                    combo.getOrDefault(
-                            player.getUniqueId(),
-                            0
-                    );
-
-            boolean active =
-                    isFuryActive(player);
-
-            player.sendMessage(
-                    ChatColor.GOLD +
-                    "===== MorningStar ====="
-            );
-
-            player.sendMessage(
-                    ChatColor.YELLOW +
-                    "Owner: " +
-                    ChatColor.WHITE +
-                    OWNER
-            );
-
-            player.sendMessage(
-                    ChatColor.YELLOW +
-                    "Critical Combo: " +
-                    ChatColor.WHITE +
-                    hits +
-                    "/4"
-            );
-
-            player.sendMessage(
-                    ChatColor.YELLOW +
-                    "Critical Fury: " +
-                    (
-                        active
-                        ? ChatColor.GREEN + "ACTIVE"
-                        : ChatColor.RED + "INACTIVE"
+            target.addPotionEffect(
+                    new PotionEffect(
+                            PotionEffectType.SLOWNESS,
+                            60,
+                            254,
+                            false,
+                            true,
+                            true
                     )
             );
 
-            if (active) {
+            target.getWorld().spawnParticle(
+                    Particle.DUST,
+                    target.getLocation().add(0, 1, 0),
+                    40,
+                    0.5,
+                    1.0,
+                    0.5,
+                    new Particle.DustOptions(
+                            Color.fromRGB(120, 0, 0),
+                            2.0f
+                    )
+            );
 
-                Long end =
-                        fury.get(
-                                player.getUniqueId()
-                        );
+            target.getWorld().playSound(
+                    target.getLocation(),
+                    Sound.BLOCK_ANVIL_LAND,
+                    0.7f,
+                    1.8f
+            );
 
-                long seconds =
-                        Math.max(
-                                0,
-                                (end -
-                                System.currentTimeMillis())
-                                / 1000
-                        );
+            player.sendMessage(
+                    ChatColor.DARK_RED +
+                    "" + ChatColor.BOLD +
+                    "STUN!"
+            );
 
-                player.sendMessage(
-                        ChatColor.YELLOW +
-                        "Time left: " +
-                        ChatColor.WHITE +
-                        seconds +
-                        "s"
-                );
-            }
+            // Reset counter
+            hitCounter.put(uuid, 0);
 
-            return true;
+        } else {
+
+            hitCounter.put(uuid, hits);
         }
-
-        sendHelp(player);
-
-        return true;
     }
 
-    // =========================
-    // HELP
-    // =========================
+    // =========================================================
+    // REACH
+    // =========================================================
+    //
+    // Java-only custom ray trace.
+    // This allows Morningstar to detect a target
+    // up to 4 blocks in front of the player.
+    //
+    // =========================================================
 
-    private void sendHelp(Player player) {
+    @EventHandler
+    public void onSwing(org.bukkit.event.player.PlayerAnimationEvent event) {
 
-        player.sendMessage(
-                ChatColor.GOLD +
-                "===== MorningStar ====="
+        Player player = event.getPlayer();
+
+        if (!isOwner(player)) {
+            return;
+        }
+
+        ItemStack item = player.getInventory().getItemInMainHand();
+
+        if (!isMorningstar(item)) {
+            return;
+        }
+
+        // Don't interfere with normal close-range attack.
+        // Only use custom reach when target is beyond normal
+        // vanilla attack distance.
+
+        RayTraceResult result =
+                player.getWorld().rayTraceEntities(
+                        player.getEyeLocation(),
+                        player.getEyeLocation().getDirection(),
+                        REACH,
+                        0.35,
+                        entity -> {
+
+                            if (!(entity instanceof LivingEntity)) {
+                                return false;
+                            }
+
+                            return entity != player;
+                        }
+                );
+
+        if (result == null) {
+            return;
+        }
+
+        Entity hit = result.getHitEntity();
+
+        if (!(hit instanceof LivingEntity target)) {
+            return;
+        }
+
+        double distance =
+                player.getEyeLocation()
+                        .distance(target.getLocation());
+
+        if (distance <= 3.0) {
+            return;
+        }
+
+        // Manual extended-range attack
+        double damage = isFuryActive(player)
+                ? CRITICAL_FURY_DAMAGE
+                : NORMAL_DAMAGE;
+
+        EntityDamageByEntityEvent damageEvent =
+                new EntityDamageByEntityEvent(
+                        player,
+                        target,
+                        EntityDamageByEntityEvent.DamageCause.ENTITY_ATTACK,
+                        damage
+                );
+
+        Bukkit.getPluginManager()
+                .callEvent(damageEvent);
+
+        if (!damageEvent.isCancelled()) {
+
+            target.damage(
+                    damageEvent.getFinalDamage(),
+                    player
+            );
+
+            // Count the extended hit
+            UUID uuid = player.getUniqueId();
+
+            int hits =
+                    hitCounter.getOrDefault(uuid, 0) + 1;
+
+            if (hits >= STUN_HITS) {
+
+                target.addPotionEffect(
+                        new PotionEffect(
+                                PotionEffectType.SLOWNESS,
+                                60,
+                                254,
+                                false,
+                                true,
+                                true
+                        )
+                );
+
+                hitCounter.put(uuid, 0);
+
+            } else {
+
+                hitCounter.put(uuid, hits);
+            }
+        }
+    }
+
+    // =========================================================
+    // CLEANUP
+    // =========================================================
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+
+        UUID uuid = event.getPlayer().getUniqueId();
+
+        hitCounter.remove(uuid);
+        furyActive.remove(uuid);
+        furyCooldown.remove(uuid);
+    }
+
+    // =========================================================
+    // COMMAND
+    // =========================================================
+
+    public boolean giveMorningstar(Player player) {
+
+        if (!isOwner(player)) {
+            return false;
+        }
+
+        player.getInventory().addItem(
+                createMorningstar()
         );
 
-        player.sendMessage(
-                ChatColor.YELLOW +
-                "/morningstar give" +
-                ChatColor.GRAY +
-                " - Get MorningStar"
-        );
-
-        player.sendMessage(
-                ChatColor.YELLOW +
-                "/morningstar status" +
-                ChatColor.GRAY +
-                " - View status"
-        );
-
-        player.sendMessage(
-                ChatColor.YELLOW +
-                "/morningstar help" +
-                ChatColor.GRAY +
-                " - Show help"
-        );
+        return true;
     }
 }
